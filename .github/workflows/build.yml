@@ -1,0 +1,292 @@
+name: Build KRYNONIC
+on:
+  workflow_dispatch:
+  push:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.14
+      - name: Write mod files and build
+        run: |
+          set -e
+          mkdir -p mod && cd mod
+          mkdir -p $(dirname settings.gradle)
+          cat > settings.gradle <<'EOF_0'
+          pluginManagement {
+              repositories {
+                  maven { url = 'https://maven.fabricmc.net/' }
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          EOF_0
+          mkdir -p $(dirname build.gradle)
+          cat > build.gradle <<'EOF_1'
+          plugins {
+              id 'fabric-loom' version "${loom_version}"
+              id 'maven-publish'
+          }
+          version = project.mod_version
+          group = project.maven_group
+          base { archivesName = project.archives_base_name }
+          repositories {}
+          dependencies {
+              minecraft "com.mojang:minecraft:${project.minecraft_version}"
+              mappings "net.fabricmc:yarn:${project.yarn_mappings}:v2"
+              modImplementation "net.fabricmc:fabric-loader:${project.loader_version}"
+              modImplementation "net.fabricmc.fabric-api:fabric-api:${project.fabric_version}"
+          }
+          processResources {
+              inputs.property "version", project.version
+              filesMatching("fabric.mod.json") { expand "version": inputs.properties.version }
+          }
+          tasks.withType(JavaCompile).configureEach { it.options.release = 21 }
+          java {
+              sourceCompatibility = JavaVersion.VERSION_21
+              targetCompatibility = JavaVersion.VERSION_21
+          }
+          EOF_1
+          mkdir -p $(dirname src/main/resources/fabric.mod.json)
+          cat > src/main/resources/fabric.mod.json <<'EOF_2'
+          {
+            "schemaVersion": 1,
+            "id": "krynonic",
+            "version": "${version}",
+            "name": "KRYNONIC",
+            "description": "A trident with riptide anywhere, lightning strike, mace smash and wind burst.",
+            "authors": ["You"],
+            "environment": "*",
+            "entrypoints": { "main": ["com.krynonic.KrynonicMod"] },
+            "depends": {
+              "fabricloader": ">=0.16.0",
+              "minecraft": "~1.21.11",
+              "java": ">=21",
+              "fabric-api": "*"
+            }
+          }
+          EOF_2
+          mkdir -p $(dirname src/main/resources/assets/krynonic/lang/en_us.json)
+          cat > src/main/resources/assets/krynonic/lang/en_us.json <<'EOF_3'
+          { "item.krynonic.krynonic": "KRYNONIC" }
+          EOF_3
+          mkdir -p $(dirname src/main/resources/assets/krynonic/items/krynonic.json)
+          cat > src/main/resources/assets/krynonic/items/krynonic.json <<'EOF_4'
+          {
+            "model": {
+              "type": "minecraft:condition",
+              "property": "minecraft:using_item",
+              "on_false": {
+                "type": "minecraft:special",
+                "base": "minecraft:item/trident",
+                "model": { "type": "minecraft:trident" }
+              },
+              "on_true": {
+                "type": "minecraft:special",
+                "base": "minecraft:item/trident_throwing",
+                "model": { "type": "minecraft:trident" }
+              }
+            }
+          }
+          EOF_4
+          mkdir -p $(dirname src/main/java/com/krynonic/KrynonicMod.java)
+          cat > src/main/java/com/krynonic/KrynonicMod.java <<'EOF_5'
+          package com.krynonic;
+
+          import net.fabricmc.api.ModInitializer;
+          import net.fabricmc.fabric.api.event.player.AttackEntityCallback;
+          import net.fabricmc.fabric.api.itemgroup.v1.ItemGroupEvents;
+          import net.minecraft.component.DataComponentTypes;
+          import net.minecraft.component.type.AttributeModifierSlot;
+          import net.minecraft.component.type.AttributeModifiersComponent;
+          import net.minecraft.entity.LivingEntity;
+          import net.minecraft.entity.attribute.EntityAttributeModifier;
+          import net.minecraft.entity.attribute.EntityAttributes;
+          import net.minecraft.item.Item;
+          import net.minecraft.item.ItemGroups;
+          import net.minecraft.particle.ParticleTypes;
+          import net.minecraft.registry.Registries;
+          import net.minecraft.registry.Registry;
+          import net.minecraft.registry.RegistryKey;
+          import net.minecraft.registry.RegistryKeys;
+          import net.minecraft.server.world.ServerWorld;
+          import net.minecraft.sound.SoundCategory;
+          import net.minecraft.sound.SoundEvents;
+          import net.minecraft.text.Style;
+          import net.minecraft.text.Text;
+          import net.minecraft.util.ActionResult;
+          import net.minecraft.util.Identifier;
+          import net.minecraft.util.Unit;
+          import net.minecraft.util.math.Box;
+          import net.minecraft.util.math.Vec3d;
+
+          public class KrynonicMod implements ModInitializer {
+              public static final String MOD_ID = "krynonic";
+              public static Item KRYNONIC;
+
+              @Override
+              public void onInitialize() {
+                  Identifier id = Identifier.of(MOD_ID, "krynonic");
+                  RegistryKey<Item> key = RegistryKey.of(RegistryKeys.ITEM, id);
+
+                  Item.Settings settings = new Item.Settings()
+                      .registryKey(key)
+                      .maxCount(1)
+                      .component(DataComponentTypes.ITEM_NAME,
+                          Text.literal("KRYNONIC").setStyle(Style.EMPTY.withBold(true).withColor(0xAA00FF)))
+                      .component(DataComponentTypes.UNBREAKABLE, Unit.INSTANCE)
+                      .attributeModifiers(AttributeModifiersComponent.builder()
+                          .add(EntityAttributes.ATTACK_DAMAGE,
+                              new EntityAttributeModifier(Item.BASE_ATTACK_DAMAGE_MODIFIER_ID, 9.0, EntityAttributeModifier.Operation.ADD_VALUE),
+                              AttributeModifierSlot.MAINHAND)
+                          .add(EntityAttributes.ATTACK_SPEED,
+                              new EntityAttributeModifier(Item.BASE_ATTACK_SPEED_MODIFIER_ID, -2.9, EntityAttributeModifier.Operation.ADD_VALUE),
+                              AttributeModifierSlot.MAINHAND)
+                          .build());
+
+                  KRYNONIC = Registry.register(Registries.ITEM, key, new KrynonicItem(settings));
+                  ItemGroupEvents.modifyEntriesEvent(ItemGroups.COMBAT).register(e -> e.add(KRYNONIC));
+
+                  // Mace-style smash + wind burst when hitting while falling
+                  AttackEntityCallback.EVENT.register((player, world, hand, entity, hit) -> {
+                      if (world.isClient() || !player.getStackInHand(hand).isOf(KRYNONIC)) return ActionResult.PASS;
+                      double fall = player.fallDistance;
+                      if (fall <= 1.5 || player.isOnGround() || player.isGliding()) return ActionResult.PASS;
+                      if (!(world instanceof ServerWorld sw) || !(entity instanceof LivingEntity target)) return ActionResult.PASS;
+
+                      // mace-like bonus: 4/block (first 3), 2/block (next 5), 1/block after
+                      double bonus = Math.min(fall, 3) * 4 + Math.max(0, Math.min(fall - 3, 5)) * 2 + Math.max(0, fall - 8);
+                      target.damage(sw, sw.getDamageSources().playerAttack(player), (float) (bonus * 2.0 + 6.0));
+
+                      // wind burst
+                      Vec3d c = target.getPos();
+                      sw.spawnParticles(ParticleTypes.GUST_EMITTER_LARGE, c.x, c.y, c.z, 1, 0, 0, 0, 0);
+                      sw.playSound(null, c.x, c.y, c.z, SoundEvents.ITEM_MACE_SMASH_GROUND_HEAVY, SoundCategory.PLAYERS, 1f, 1f);
+                      Box area = target.getBoundingBox().expand(3.5);
+                      for (LivingEntity e : sw.getEntitiesByClass(LivingEntity.class, area, x -> x != player)) {
+                          Vec3d d = e.getPos().subtract(c);
+                          d = d.lengthSquared() < 1.0E-4 ? new Vec3d(0, 0, 0.1) : d.normalize();
+                          e.addVelocity(d.x * 1.2, 0.6, d.z * 1.2);
+                          e.velocityModified = true;
+                      }
+                      // bounce the player up and cancel fall damage
+                      Vec3d v = player.getVelocity();
+                      player.setVelocity(v.x, 0.9, v.z);
+                      player.velocityModified = true;
+                      player.fallDistance = 0;
+                      return ActionResult.PASS;
+                  });
+              }
+          }
+          EOF_5
+          mkdir -p $(dirname src/main/java/com/krynonic/KrynonicItem.java)
+          cat > src/main/java/com/krynonic/KrynonicItem.java <<'EOF_6'
+          package com.krynonic;
+
+          import net.minecraft.entity.EntityType;
+          import net.minecraft.entity.LivingEntity;
+          import net.minecraft.entity.MovementType;
+          import net.minecraft.entity.SpawnReason;
+          import net.minecraft.entity.LightningEntity;
+          import net.minecraft.entity.player.PlayerEntity;
+          import net.minecraft.entity.projectile.ProjectileUtil;
+          import net.minecraft.item.Item;
+          import net.minecraft.item.ItemStack;
+          import net.minecraft.item.consume.UseAction;
+          import net.minecraft.server.world.ServerWorld;
+          import net.minecraft.sound.SoundCategory;
+          import net.minecraft.sound.SoundEvents;
+          import net.minecraft.util.ActionResult;
+          import net.minecraft.util.Hand;
+          import net.minecraft.util.hit.EntityHitResult;
+          import net.minecraft.util.math.Box;
+          import net.minecraft.util.math.Vec3d;
+          import net.minecraft.world.World;
+
+          /**
+           * Quick tap of right-click  -> lightning on the entity you look at.
+           * Hold right-click (0.5s+)  -> riptide launch (works anywhere, no water/rain needed).
+           */
+          public class KrynonicItem extends Item {
+              private static final int HOLD_TICKS = 10;
+              private static final double RANGE = 64;
+
+              public KrynonicItem(Settings settings) { super(settings); }
+
+              @Override public UseAction getUseAction(ItemStack stack) { return UseAction.SPEAR; }
+              @Override public int getMaxUseTime(ItemStack stack, LivingEntity user) { return 72000; }
+
+              @Override
+              public ActionResult use(World world, PlayerEntity user, Hand hand) {
+                  user.setCurrentHand(hand);
+                  return ActionResult.CONSUME;
+              }
+
+              @Override
+              public boolean onStoppedUsing(ItemStack stack, World world, LivingEntity user, int remainingUseTicks) {
+                  if (world.isClient() || !(user instanceof PlayerEntity player) || !(world instanceof ServerWorld sw)) return false;
+                  int held = getMaxUseTime(stack, user) - remainingUseTicks;
+
+                  if (held < HOLD_TICKS) {
+                      // tap -> lightning
+                      Vec3d eye = player.getEyePos();
+                      Vec3d look = player.getRotationVec(1.0f);
+                      Vec3d end = eye.add(look.multiply(RANGE));
+                      Box box = player.getBoundingBox().stretch(look.multiply(RANGE)).expand(1.0);
+                      EntityHitResult hit = ProjectileUtil.raycast(player, eye, end, box,
+                          e -> !e.isSpectator() && e.canHit(), RANGE * RANGE);
+                      if (hit != null) {
+                          LightningEntity bolt = EntityType.LIGHTNING_BOLT.create(sw, SpawnReason.TRIGGERED);
+                          if (bolt != null) {
+                              bolt.refreshPositionAfterTeleport(hit.getEntity().getPos());
+                              sw.spawnEntity(bolt);
+                          }
+                      }
+                      return true;
+                  }
+
+                  // hold -> riptide anywhere
+                  Vec3d look = player.getRotationVec(1.0f).multiply(3.0);
+                  player.addVelocity(look.x, look.y, look.z);
+                  player.velocityModified = true;
+                  player.useRiptide(20, 8.0f, stack);
+                  if (player.isOnGround()) player.move(MovementType.SELF, new Vec3d(0, 1.2, 0));
+                  player.fallDistance = 0;
+                  sw.playSound(null, player.getX(), player.getY(), player.getZ(),
+                      SoundEvents.ITEM_TRIDENT_RIPTIDE_3.value(), SoundCategory.PLAYERS, 1f, 1f);
+                  return true;
+              }
+          }
+          EOF_6
+          YARN=$(curl -s https://meta.fabricmc.net/v2/versions/yarn/1.21.11 | jq -r '.[0].version')
+          LOADER=$(curl -s https://meta.fabricmc.net/v2/versions/loader | jq -r '[.[]|select(.stable==true)][0].version')
+          FAPI_JSON=$(curl -s -G "https://api.modrinth.com/v2/project/fabric-api/version" --data-urlencode 'game_versions=["1.21.11"]' --data-urlencode 'loaders=["fabric"]')
+          FAPI=$(echo "$FAPI_JSON" | jq -r '.[0].version_number')
+          FAPI_URL=$(echo "$FAPI_JSON" | jq -r '.[0].files[0].url')
+          echo "yarn=$YARN loader=$LOADER fabric-api=$FAPI"
+          cat > gradle.properties <<EOF_PROPS
+          minecraft_version=1.21.11
+          yarn_mappings=$YARN
+          loader_version=$LOADER
+          loom_version=1.14-SNAPSHOT
+          mod_version=1.0.0
+          maven_group=com.krynonic
+          archives_base_name=krynonic
+          fabric_version=$FAPI
+          EOF_PROPS
+          gradle build --no-daemon
+          mkdir -p ../result
+          cp build/libs/krynonic-1.0.0.jar ../result/
+          curl -sL "$FAPI_URL" -o ../result/fabric-api-$FAPI.jar
+          ls -la ../result
+      - uses: actions/upload-artifact@v4
+        with:
+          name: KRYNONIC-mod-and-fabric-api
+          path: result/*.jar
+          
